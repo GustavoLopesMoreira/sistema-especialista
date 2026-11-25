@@ -1,8 +1,10 @@
 import base64
+import re
 from html import escape
+from datetime import date, timedelta
 from pathlib import Path
 import streamlit as st
-from engine import executar_inferencia
+from engine import RULES, executar_inferencia
 
 st.set_page_config(
     page_title="DermaTech | Clínica de Estética",
@@ -57,10 +59,15 @@ h1{font-size:2.5rem!important;line-height:1.12!important;}
 .brand small{display:block;font-size:.57rem;letter-spacing:2px;color:#657168;font-weight:700;}
 .eyebrow{color:var(--clay);font-size:.72rem;letter-spacing:2px;font-weight:700;text-transform:uppercase;}
 .hero,.about-hero{background:linear-gradient(120deg,#e8e9df,#f7f3eb);border:1px solid var(--line);border-radius:24px;padding:2rem;margin:.5rem 0 1.2rem;}
-.card,.about-values,.proposal-card{background:var(--white);border:1px solid var(--line);border-radius:17px;padding:1rem 1.15rem;margin:.35rem 0;height:100%;}
+.card,.about-values,.proposal-card,.access-panel{background:var(--white);border:1px solid var(--line);border-radius:17px;padding:1rem 1.15rem;margin:.35rem 0;height:100%;}
+.stat-card{background:#fffefa;border:1px solid var(--line);border-radius:15px;padding:1.05rem 1.2rem;min-height:110px;}
+.stat-card small{font-size:.68rem;letter-spacing:1px;color:#68746a;font-weight:700;}
+.stat-card strong{display:block;font-size:2rem;color:var(--forest);line-height:1.3;}
+.stat-card span{font-size:.78rem;color:#68746a;}
 .muted{color:#68746a;font-size:.9rem;}
 .tag{display:inline-block;background:#e9eee5;color:#405d47;padding:.3rem .6rem;border-radius:8px;font-size:.75rem;font-weight:700;}
 .rule-id{display:inline-block;background:#edf2eb;color:#405d47;border-radius:8px;padding:.32rem .55rem;font-size:.75rem;font-weight:700;margin-right:.5rem;}
+.rule-meta{font-size:.7rem;color:#718074;font-weight:700;letter-spacing:1px;text-transform:uppercase;}
 .photo-card{overflow:hidden;background:#fffefa;border:1px solid var(--line);border-radius:17px;padding:0;height:100%;display:flex;flex-direction:column;}
 .photo-frame{width:100%;aspect-ratio:4/3;overflow:hidden;background:#e9e9e1;}
 .photo-frame img{display:block;width:100%;height:100%;object-fit:cover;object-position:center;}
@@ -74,7 +81,8 @@ h1{font-size:2.5rem!important;line-height:1.12!important;}
 .fact-card{background:#fffefa;border:1px solid var(--line);border-radius:13px;padding:.85rem 1rem;margin:.25rem 0;min-height:74px;}
 .fact-card small{color:#68746a;font-size:.75rem;}
 .fact-card strong{display:block;color:var(--ink);margin-top:.2rem;}
-div[data-testid="stButton"]>button{background:#29463a!important;color:#fff!important;border:1px solid #29463a!important;border-radius:999px!important;font-weight:700!important;padding:.62rem 1.15rem!important;}
+div[data-testid="stButton"]>button,div[data-testid="stFormSubmitButton"]>button{background:#29463a!important;color:#fff!important;border:1px solid #29463a!important;border-radius:999px!important;font-weight:700!important;padding:.62rem 1.15rem!important;}
+.st-key-booking_panel{max-width:1120px;width:100%;margin:.4rem auto 1.5rem!important;background:#fffefa;border:1px solid #dfe5da;border-radius:20px;padding:1.15rem 1.3rem!important;}
 .review-card{background:#fffefa;border:1px solid #dfe5da;border-radius:18px;padding:1.35rem 1.55rem;box-shadow:0 8px 24px rgba(37,55,47,.06);min-height:210px;}
 .review-card .review-stars{color:#b8873e;font-size:1.05rem;letter-spacing:2px;margin-bottom:.5rem;}
 .review-label{font-size:.68rem;color:#77877a;letter-spacing:1px;text-transform:uppercase;font-weight:700;}
@@ -117,18 +125,26 @@ COMPLAINTS = [
 ]
 
 REVIEWS = [
-    ("Juliana R.", "Gostei muito da forma como fui recebida desde o primeiro contato. A triagem foi simples de responder e me deu espaço para explicar o que estava me incomodando."),
+    ("Juliana R.", "Gostei muito da forma como fui recebida desde o primeiro contato. A triagem foi simples de responder, mas me deu espaço para explicar o que estava me incomodando e há quanto tempo percebia isso."),
     ("Marcos A.", "O que mais gostei foi a organização do atendimento. As perguntas ajudaram a reunir informações que eu provavelmente esqueceria de comentar na hora."),
-    ("Fernanda L.", "Desde a chegada, achei o ambiente tranquilo e acolhedor. Recebi orientações claras sobre como seria a próxima etapa do atendimento."),
+    ("Fernanda L.", "Desde a chegada, achei o ambiente tranquilo e acolhedor. Recebi orientações sobre como seria a avaliação e saí sabendo qual seria a próxima etapa."),
+    ("Rafael C.", "Consegui consultar as opções de horário e enviar minha solicitação sem dificuldade. As informações sobre o profissional de referência estavam bem explicadas."),
 ]
 
-for key, default in [("result", None), ("result_input", None), ("review_index", 0), ("page", "Início")]:
+APPOINTMENT_SLOTS = [
+    "09:00", "09:45", "10:30", "11:15",
+    "13:00", "13:45", "14:30", "15:15",
+    "16:00", "16:45", "17:30", "18:15", "19:00",
+]
+FIXED_CLOSURES = {(1, 1), (12, 25)}
+
+for key, default in [("bookings", []), ("result", None), ("result_input", None), ("booking_feedback", None), ("review_index", 0), ("page", "Início")]:
     if key not in st.session_state:
         st.session_state[key] = default
 
-nav_items = ["Início", "Nova triagem", "Sobre nós"]
+nav_items = ["Início", "Nova triagem", "Recepção", "Sobre nós"]
 with st.container(key="top_navigation"):
-    nav_cols = st.columns([3.0, 1.0, 1.35, 1.0], vertical_alignment="center")
+    nav_cols = st.columns([2.5, 1.0, 1.35, 1.0, 1.0], vertical_alignment="center")
     with nav_cols[0]:
         st.markdown('<div class="brand">✳ DermaTech<small>CLÍNICA DE ESTÉTICA</small></div>', unsafe_allow_html=True)
     for col, nav_item in zip(nav_cols[1:], nav_items):
@@ -141,6 +157,30 @@ with st.container(key="top_navigation"):
             ):
                 st.session_state.page = nav_item
                 st.rerun()
+
+
+def available_slots_for(day, professional):
+    occupied = {
+        item.get("horario")
+        for item in st.session_state.bookings
+        if item.get("data") == day.isoformat() and item.get("profissional") == professional
+    }
+    return [slot for slot in APPOINTMENT_SLOTS if slot not in occupied]
+
+
+def is_unavailable_day(day, professional):
+    if day <= date.today() or day.weekday() == 6 or (day.month, day.day) in FIXED_CLOSURES:
+        return True
+    return not available_slots_for(day, professional)
+
+
+def first_available_day(professional, start=None, horizon=180):
+    start = start or (date.today() + timedelta(days=1))
+    for offset in range(horizon):
+        candidate = start + timedelta(days=offset)
+        if not is_unavailable_day(candidate, professional):
+            return candidate
+    return None
 
 
 def render_reviews():
@@ -174,12 +214,11 @@ def render_reviews():
 def render_home():
     st.markdown('<div class="hero"><div class="eyebrow">Cuidado que começa com escuta</div><h1>Tecnologia e cuidado para a saúde da sua pele.</h1><p>Uma clínica de estética que une avaliação especializada, tecnologia e atendimento personalizado para orientar seu próximo passo.</p></div>', unsafe_allow_html=True)
     c1, c2, c3 = st.columns(3)
-    benefits = [
+    for col, (icon, title, desc) in zip((c1, c2, c3), [
         ("✳", "Triagem inteligente", "Informações organizadas por um sistema especialista."),
         ("♡", "Encaminhamento personalizado", "Direcionamento inicial conforme a queixa informada."),
         ("✓", "Avaliação profissional", "A decisão sobre cuidados acontece presencialmente."),
-    ]
-    for col, (icon, title, desc) in zip((c1, c2, c3), benefits):
+    ]):
         with col:
             st.markdown(f'<div class="card"><span class="tag">{icon}</span><h3>{title}</h3><p class="muted">{desc}</p></div>', unsafe_allow_html=True)
 
@@ -207,14 +246,13 @@ def render_triage_result(res, facts_input):
     st.write(f"**Profissional de referência:** {fatos.get('profissional')}")
     st.write(f"**Tipo de avaliação:** {fatos.get('tipo_avaliacao')}")
 
-    st.markdown("### Fatos informados")
+    st.markdown("### Como chegamos a este resultado?")
     fact_items = [
         ("Queixa", "queixa"), ("Gravidade", "gravidade"), ("Duração", "duracao"),
         ("Sensibilidade", "sensibilidade"), ("Alergias", "alergia"), ("Avaliação anterior", "avaliacao_anterior"),
     ]
     if facts_input.get("alergia") == "Sim" and facts_input.get("alergia_detalhe"):
         fact_items.append(("Alergia informada", "alergia_detalhe"))
-
     for start in range(0, len(fact_items), 3):
         cols = st.columns(3)
         for col, (label, key) in zip(cols, fact_items[start:start + 3]):
@@ -242,7 +280,68 @@ def render_triage_result(res, facts_input):
             f'<strong>Conclusão: {escape(str(res.get("conclusao")))}</strong></div>',
             unsafe_allow_html=True,
         )
-    st.caption(f"Índice heurístico acumulado: {res['certeza']*100:.1f}% — não representa probabilidade clínica.")
+
+    st.markdown("### Solicitar agendamento de avaliação")
+    matching = [p for p in STAFF if p["name"] == fatos.get("profissional")]
+    default_staff = matching[0]["name"] if matching else STAFF[0]["name"]
+    names = [p["name"] for p in STAFF] if default_staff == "Equipe DermaTech" else [default_staff] + [p["name"] for p in STAFF if p["name"] != default_staff]
+
+    with st.container(key="booking_panel"):
+        chosen = st.selectbox("Profissional de referência", names, key="booking_professional")
+        date_key = "booking_date_picker"
+        minimum_date = date.today() + timedelta(days=1)
+        default_date = first_available_day(chosen)
+
+        if default_date is None:
+            st.warning("Não há datas disponíveis para este profissional.")
+            chosen_date, slots = None, []
+        else:
+            current_date = st.session_state.get(date_key)
+            if not isinstance(current_date, date) or is_unavailable_day(current_date, chosen):
+                st.session_state[date_key] = default_date
+            chosen_date = st.date_input("Data desejada", min_value=minimum_date, format="DD/MM/YYYY", key=date_key)
+            slots = [] if is_unavailable_day(chosen_date, chosen) else available_slots_for(chosen_date, chosen)
+            if not slots:
+                st.warning("Não há atendimento disponível nesta data. Escolha outro dia.")
+
+        if chosen_date and slots:
+            with st.form("booking_form"):
+                chosen_time = st.selectbox("Horário disponível", slots)
+                c1, c2 = st.columns(2)
+                with c1:
+                    full_name = st.text_input("Nome completo", placeholder="Digite seu nome")
+                    email = st.text_input("E-mail", placeholder="voce@exemplo.com")
+                with c2:
+                    phone = st.text_input("Telefone / WhatsApp", placeholder="(21) 99999-9999")
+                    st.text_input("Data selecionada", value=chosen_date.strftime("%d/%m/%Y"), disabled=True)
+                book = st.form_submit_button("Solicitar agendamento", use_container_width=True)
+        else:
+            book = False
+
+        if book:
+            email_ok = bool(re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email.strip()))
+            phone_digits = re.sub(r"\D", "", phone)
+            slots_now = available_slots_for(chosen_date, chosen) if chosen_date else []
+            if not chosen_date or is_unavailable_day(chosen_date, chosen) or chosen_time not in slots_now:
+                st.session_state.booking_feedback = {"type": "error", "message": "Solicitação não agendada. Horário indisponível."}
+            elif not full_name.strip() or not email_ok or len(phone_digits) < 10:
+                st.session_state.booking_feedback = {"type": "error", "message": "Solicitação não agendada. Confira nome, e-mail e telefone."}
+            else:
+                st.session_state.bookings.append({
+                    "nome": full_name.strip(),
+                    "email": email.strip(),
+                    "telefone": phone.strip(),
+                    "profissional": chosen,
+                    "data": chosen_date.isoformat(),
+                    "horario": chosen_time,
+                    "area": fatos.get("area", "Avaliação geral"),
+                })
+                st.session_state.booking_feedback = {"type": "success", "message": "Solicitação agendada com sucesso."}
+
+        feedback = st.session_state.get("booking_feedback")
+        if feedback:
+            css_class = "success" if feedback["type"] == "success" else "error"
+            st.markdown(f'<div class="status-banner {css_class}">{escape(feedback["message"])}</div>', unsafe_allow_html=True)
 
 
 def render_triage():
@@ -263,7 +362,7 @@ def render_triage():
     if st.button("Analisar respostas", use_container_width=True, type="primary"):
         if alergia == "Sim" and not alergia_detalhe.strip():
             st.session_state.result = None
-            st.markdown('<div class="allergy-warning"><strong>Informe sua alergia</strong><span>Escreva qual alergia deseja informar antes de analisar.</span></div>', unsafe_allow_html=True)
+            st.markdown('<div class="allergy-warning"><strong>Informe sua alergia</strong><span>Escreva qual alergia deseja informar antes de analisar a triagem.</span></div>', unsafe_allow_html=True)
         else:
             facts_input = {
                 "queixa": queixa, "gravidade": gravidade, "duracao": duracao,
@@ -273,9 +372,35 @@ def render_triage():
             }
             st.session_state.result = executar_inferencia(facts_input)
             st.session_state.result_input = facts_input
+            st.session_state.booking_feedback = None
 
     if st.session_state.result:
         render_triage_result(st.session_state.result, st.session_state.get("result_input", {}))
+
+
+def render_reception():
+    st.markdown('<div class="eyebrow">Área interna demonstrativa</div><h1>Recepção DermaTech</h1><p class="muted">Acompanhe as solicitações de avaliação realizadas nesta sessão.</p>', unsafe_allow_html=True)
+    c1, c2, c3 = st.columns(3)
+    stats = [
+        ("SOLICITAÇÕES NESTA SESSÃO", len(st.session_state.bookings), "Registros demonstrativos"),
+        ("AGENDAMENTOS", len(st.session_state.bookings), "Horários solicitados"),
+        ("REGRAS CADASTRADAS", len(RULES), "Base de conhecimento"),
+    ]
+    for col, (label, value, foot) in zip((c1, c2, c3), stats):
+        with col:
+            st.markdown(f'<div class="stat-card"><small>{label}</small><strong>{value}</strong><span>{foot}</span></div>', unsafe_allow_html=True)
+
+    st.markdown("### Solicitações recentes")
+    if st.session_state.bookings:
+        for booking in reversed(st.session_state.bookings):
+            st.markdown(
+                f'''<div class="card"><div class="rule-meta">{booking['data']} · {booking['horario']}</div>
+                <h3>{escape(booking['nome'])}</h3><p class="muted">{escape(booking['email'])} · {escape(booking['telefone'])}</p>
+                <b>{escape(booking['profissional'])}</b><p class="muted">{escape(booking['area'])}</p></div>''',
+                unsafe_allow_html=True,
+            )
+    else:
+        st.markdown('<div class="card"><h3>Nenhuma solicitação por aqui ainda.</h3><p class="muted">Quando uma avaliação for solicitada nesta sessão, ela aparecerá nesta lista.</p></div>', unsafe_allow_html=True)
 
 
 def render_about():
@@ -294,6 +419,8 @@ if st.session_state.page == "Início":
     render_home()
 elif st.session_state.page == "Nova triagem":
     render_triage()
+elif st.session_state.page == "Recepção":
+    render_reception()
 elif st.session_state.page == "Sobre nós":
     render_about()
 
