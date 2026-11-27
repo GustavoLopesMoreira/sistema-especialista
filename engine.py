@@ -1,8 +1,3 @@
-"""Motor de inferência do protótipo acadêmico DermaTech.
-
-Contém a base de conhecimento e a execução de Forward Chaining.
-Não depende do Streamlit para permitir testes automatizados.
-"""
 
 RULES = [
     ("R01","Queixa relacionada a acne","queixa == 'Acne e oleosidade'",{"area":"Biomedicina estética","profissional":"Helena Martins"},.92),
