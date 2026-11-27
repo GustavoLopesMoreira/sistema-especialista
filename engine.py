@@ -1,3 +1,9 @@
+"""Motor de inferência do protótipo acadêmico DermaTech.
+
+Contém a base de conhecimento e a execução de Forward Chaining.
+Não depende do Streamlit para permitir testes automatizados.
+"""
+
 RULES = [
     ("R01","Queixa relacionada a acne","queixa == 'Acne e oleosidade'",{"area":"Biomedicina estética","profissional":"Helena Martins"},.92),
     ("R02","Queixa relacionada a manchas ou melasma","queixa == 'Manchas e melasma'",{"area":"Dermatologia","profissional":"Caio Nogueira"},.94),
@@ -27,15 +33,20 @@ RULES = [
     ("R26","Dados de triagem coletados","queixa != '' and gravidade != ''",{"triagem_completa":True},.99),
     ("R27","Eixo de atendimento identificado","'area' in fatos",{"encaminhamento_definido":True},.99),
     ("R28","Descrição de alergia informada","alergia == 'Sim' and alergia_detalhe != ''",{"alergia_detalhe_registrada":True},.99),
+
     ("R29","Queixa intensa e persistente","gravidade == 'Intensa' and duracao == 'Mais de 6 meses'",{"prioridade":"Atenção prioritária","marcador":"Destacar combinação de intensidade e persistência para avaliação presencial"},.98),
     ("R30","Queixa moderada e persistente com sensibilidade","gravidade == 'Moderada' and duracao == 'Mais de 6 meses' and sensibilidade == 'Sim'",{"marcador":"Registrar persistência associada à sensibilidade para a avaliação"},.96),
     ("R31","Alergia relatada junto com sensibilidade","alergia == 'Sim' and alergia_detalhe != '' and sensibilidade == 'Sim'",{"marcador":"Informar ao profissional a alergia descrita e o relato de sensibilidade"},.98),
     ("R32","Queixa intensa com alergia informada","gravidade == 'Intensa' and alergia == 'Sim' and alergia_detalhe != ''",{"marcador":"Destacar a alergia informada durante a avaliação presencial"},.98),
 ]
 
-
 def executar_inferencia(fatos_iniciais):
-    """Aplica regras por encadeamento para frente e registra cada etapa."""
+    """Aplica regras por encadeamento para frente e registra cada etapa.
+
+    O motor parte dos fatos informados, percorre as regras ainda não aplicadas
+    e adiciona/atualiza fatos derivados. O ciclo termina quando nenhuma regra
+    nova é acionada.
+    """
     fatos = dict(fatos_iniciais)
     aplicadas = set()
     explicacoes = []
@@ -62,6 +73,7 @@ def executar_inferencia(fatos_iniciais):
             if not condicao_atendida:
                 continue
 
+            # Registra quais fatos foram efetivamente criados ou atualizados.
             fatos_derivados = {
                 chave: valor
                 for chave, valor in conclusao.items()
